@@ -1,56 +1,133 @@
-# Cotizador Inteligente - MB Soluciones
+# Cotizador Inteligente — MB Soluciones SpA
 
-Un sistema web moderno de cotizaciones y gestión de clientes diseñado para agilizar el proceso de ventas. Esta aplicación permite generar presupuestos detallados, mantener un directorio de clientes y exportar documentos comerciales (PDF) de manera rápida e intuitiva.
+> Sistema web comercial moderno para generación de cotizaciones, gestión de clientes y control de ventas. Construido con **Angular 19**, **Supabase** y **Tailwind CSS**, desplegado en producción sobre **Netlify**.
 
-## 🛠️ Tecnologías y Lenguajes
+---
 
-El proyecto fue construido utilizando los estándares modernos del desarrollo web, enfocándose en la reactividad y el rendimiento:
+## Stack Tecnológico
 
-- **Framework Core:** [Angular](https://angular.dev/) (Usando la nueva sintaxis de control de flujo `@if`, `@for` y Standalone Components).
-- **Lenguaje Principal:** [TypeScript](https://www.typescriptlang.org/) para un tipado estricto y código seguro.
-- **Estilos y UI:** [Tailwind CSS](https://tailwindcss.com/) para un diseño responsivo, limpio y utilitario sin depender de librerías de componentes pesadas.
-- **Gestión de Estado:** **Angular Signals** (`signal`, `computed`). Se dejó atrás `RxJS` para la UI local, adoptando Signals para una reactividad granular y un rendimiento extremo.
-- **Exportación de Documentos:** `jsPDF` y `jsPDF-AutoTable` para la generación dinámica de archivos PDF directamente desde el navegador.
+| Capa | Tecnología |
+|---|---|
+| Framework | [Angular 19](https://angular.dev/) — Standalone Components, SSR, nueva sintaxis `@if` / `@for` |
+| Lenguaje | [TypeScript](https://www.typescriptlang.org/) — tipado estricto end-to-end |
+| Estado reactivo | **Angular Signals** (`signal`, `computed`) — sin RxJS en la UI local |
+| Estilos | [Tailwind CSS](https://tailwindcss.com/) — diseño responsivo, dark-friendly |
+| Base de datos | [Supabase](https://supabase.com/) (PostgreSQL) — CRUD en tiempo real vía cliente REST |
+| Generación PDF | `jsPDF` + `jsPDF-AutoTable` — carga dinámica lazy para no penalizar el bundle inicial |
+| Renderizado | SSR (Server-Side Rendering) con Angular Universal |
+| Deploy | [Netlify](https://www.netlify.com/) — CI/CD automático desde rama `main` |
 
-## ✨ Funcionalidades Principales
+---
 
-### 1. Panel de Control (Dashboard)
-- Visualización de métricas clave: Total histórico de cotizaciones y métricas del día actual.
-- Historial filtrable por fecha de emisión para fácil seguimiento.
+## Funcionalidades Principales
 
-### 2. Generador de Cotizaciones Avanzado
-- **Estructura Dinámica:** Permite agregar "Ítems Principales" (Títulos/Secciones) y "Sub-ítems" (Productos o Servicios).
-- **Reordenamiento Inteligente:** No importa en qué orden ingrese los datos el usuario; el sistema automáticamente agrupa cada título con sus respectivos sub-ítems, asegurando un formato lógico en el documento final.
-- **Cálculos Automáticos:** Subtotal, cálculo automático de IVA (19% Chile) y total final con formato de peso chileno (CLP) en tiempo real.
-- **Exportación a PDF:** Genera un documento profesional listo para el cliente, incorporando el logo de la empresa (`logomb.jpg`), datos de contacto y una tabla detallada.
+### Autenticación con Roles
+- Sistema de login con múltiples usuarios definidos en variables de entorno
+- Roles diferenciados: **Admin** y **Vendedor**
+- Card de usuario activo visible en el sidebar con nombre y rol
 
-### 3. Directorio de Clientes
-- Registro completo con nombre, RUT, contacto y observaciones.
-- **Buscador en Tiempo Real:** Filtrado instantáneo por nombre o RUT.
-- **Vista Optimizada:** Muestra los últimos 12 clientes ingresados (ordenados de más reciente a más antiguo) para mantener una interfaz limpia, sin perder acceso al historial completo mediante la búsqueda.
-- Integración directa: Botón rápido para generar una cotización pre-llenada para un cliente específico desde el directorio.
+### Panel de Control (Dashboard)
+- Métricas en tiempo real: total facturado histórico, cotizaciones del día y del mes
+- **Filtros avanzados combinados**: rango de fechas (Desde / Hasta) y búsqueda por cliente simultáneos
+- Botón "Limpiar filtros" contextual que aparece solo cuando hay filtros activos
 
-### 4. Historial de Cotizaciones
-- Almacenamiento local temporal de las cotizaciones emitidas.
-- Búsqueda inteligente por nombre de cliente o número de cotización (Ej: "COT-001").
+### Generador de Cotizaciones
+- Estructura dinámica con **Ítems Principales** (secciones) y **Sub-ítems** (productos/servicios)
+- Reordenamiento automático: agrupa títulos con sus sub-ítems en el PDF sin importar el orden de ingreso
+- Cálculo automático de subtotal, **IVA 19% (Chile)** y total en CLP con formato de miles en tiempo real
+- Campo de **Notas / Observaciones** por cotización
+- Selector de **Estado**: `Pendiente`, `Aprobada` o `Rechazada`
+- Validación de duplicados por número de cotización antes de guardar
 
-## 🚀 Optimizaciones Destacadas
+### Vista Previa y Exportación PDF
+- Botón **Vista Previa** que abre un modal con el PDF renderizado en iframe (base64 data URI, sin restricciones CSP)
+- Botón **Descargar PDF** desde el modal de vista previa
+- Exportación directa a PDF profesional con logo, datos de empresa y tabla detallada
 
-- **Change Detection "OnPush":** Gracias al uso exclusivo de Signals, el componente principal (`ChangeDetectionStrategy.OnPush`) solo se renderiza cuando los datos específicos cambian, ahorrando recursos de CPU y memoria.
-- **Sintaxis de Control Moderna:** Uso de `@for (track id)` que optimiza enormemente la renderización de listas y tablas en el DOM, evitando recrear elementos innecesarios.
-- **Manejo de Memoria:** Los modales y cálculos derivados (`computed()`) se ejecutan y limpian de forma nativa por el framework, previniendo fugas de memoria (memory leaks).
-- **Formateo "As you type":** Optimización en las entradas numéricas que formatea en tiempo real a moneda chilena (puntos separadores de miles) sin perder el valor matemático subyacente para los cálculos del sistema.
+### Historial de Cotizaciones
+- Búsqueda instantánea por número o nombre de cliente
+- **Badges de estado** con color: ámbar (pendiente), verde (aprobada), rojo (rechazada)
+- Botón **Duplicar cotización**: clona ítems, cliente y notas en el editor para editar y guardar como nueva
+- Edición y eliminación de cotizaciones existentes
 
-## 📦 Inicialización del Proyecto
+### Directorio de Clientes
+- Registro completo: nombre, RUT, teléfono, email, dirección y observaciones
+- **Validación de RUT chileno** con algoritmo módulo-11 en tiempo real (dígito verificador)
+- Buscador por nombre o RUT con resultados instantáneos
+- Acceso directo: botón para pre-llenar una cotización con los datos del cliente seleccionado
 
-Para correr este proyecto en modo desarrollo local:
+### Catálogo de Productos
+- CRUD completo de productos con nombre, descripción y precio neto
+- Inserción rápida desde el catálogo al formulario de cotización activo
 
-1. Instalar dependencias:
-   ```bash
-   npm install
-   ```
-2. Iniciar el servidor local:
-   ```bash
-   ng serve
-   ```
-3. Navegar a `http://localhost:4200/`. La aplicación se recargará automáticamente si cambias cualquiera de los archivos fuente.
+---
+
+## Arquitectura y Optimizaciones
+
+- **`ChangeDetectionStrategy.OnPush`** en el componente principal: se re-renderiza únicamente cuando cambian los signals, minimizando ciclos innecesarios de detección
+- **`computed()` signals** para todos los valores derivados (totales, filtros, búsquedas), garantizando caché automático y zero recalculation en renders sin cambios
+- **`@for (track id)`** en todas las listas: Angular reutiliza nodos DOM en lugar de recrearlos, con un beneficio notable en tablas con muchos ítems
+- **Lazy loading de librerías PDF**: `jsPDF` y `AutoTable` se cargan desde CDN solo cuando el usuario genera un PDF, reduciendo el bundle inicial en ~300 kB
+- **SSR con guards de plataforma**: toda lógica de browser (`afterNextRender`, `isPlatformBrowser`) está correctamente aislada para evitar errores durante el renderizado en servidor
+
+---
+
+## Configuración del Proyecto
+
+### Variables de entorno
+
+Editar `src/environments/environment.ts`:
+
+```typescript
+export const environment = {
+  production: false,
+  supabaseUrl: 'TU_URL_SUPABASE',
+  supabaseKey: 'TU_ANON_KEY',
+  validUsers: [
+    { username: 'admin', password: 'password', role: 'admin', displayName: 'Administrador' }
+  ]
+};
+```
+
+### Migraciones Supabase
+
+Ejecutar en el SQL Editor de Supabase para habilitar los campos de estado y notas:
+
+```sql
+ALTER TABLE cotizaciones ADD COLUMN IF NOT EXISTS notas TEXT DEFAULT '';
+ALTER TABLE cotizaciones ADD COLUMN IF NOT EXISTS estado TEXT DEFAULT 'pendiente';
+```
+
+### Desarrollo local
+
+```bash
+# Instalar dependencias
+npm install
+
+# Servidor de desarrollo en http://localhost:4200
+ng serve
+
+# Build de producción
+ng build
+```
+
+---
+
+## Estructura del Proyecto
+
+```
+src/
+├── app/
+│   ├── app.ts              # Componente principal — lógica completa con Signals
+│   └── supabase.service.ts # Servicio CRUD para Supabase
+├── environments/
+│   └── environment.ts      # Configuración y usuarios
+└── public/
+    └── logomb.jpg          # Logo empresa (usado en PDFs generados)
+```
+
+---
+
+## Licencia
+
+Proyecto privado — MB Soluciones SpA. Todos los derechos reservados.
