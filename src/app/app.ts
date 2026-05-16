@@ -1,6 +1,8 @@
 import { Component, ChangeDetectionStrategy, signal, computed, inject, OnInit, PLATFORM_ID, afterNextRender } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { SupabaseService } from './supabase.service';
+import { environment } from '../environments/environment';
 
 // Definimos la estructura de un elemento en la cotización (puede ser título o sub-item)
 interface QuoteRow {
@@ -11,6 +13,8 @@ interface QuoteRow {
   price: number;
 }
 
+type QuoteStatus = 'pendiente' | 'aprobada' | 'rechazada';
+
 // Estructura para una cotización guardada en el historial
 interface SavedQuote {
   id: string;
@@ -19,6 +23,8 @@ interface SavedQuote {
   customerName: string;
   total: number;
   items: QuoteRow[];
+  notes: string;
+  status: QuoteStatus;
 }
 
 // Estructura para un cliente guardado
@@ -271,8 +277,19 @@ interface Product {
           </div>
         </nav>
 
-        <!-- Pie del Sidebar: Cerrar Sesión + Copyright -->
+        <!-- Pie del Sidebar: Usuario + Cerrar Sesión -->
         <div class="p-4 border-t border-slate-700/50 flex flex-col gap-2">
+          @if (currentUser()) {
+            <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-800/60 mb-1">
+              <div class="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-xs font-bold flex-shrink-0">
+                {{ currentUser()!.displayName.charAt(0) }}
+              </div>
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-white truncate">{{ currentUser()!.displayName }}</p>
+                <p class="text-xs text-slate-400 capitalize">{{ currentUser()!.role }}</p>
+              </div>
+            </div>
+          }
           <button (click)="doLogout()" class="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-all duration-200 group">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="group-hover:scale-110 transition-transform"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
             <span class="text-sm font-medium">Cerrar Sesión</span>
@@ -368,7 +385,7 @@ interface Product {
                 </div>
               </div>
 
-              <!-- Tarjeta de Búsqueda y Lista por Fecha -->
+              <!-- Tarjeta de Búsqueda y Lista por Fecha (simple) -->
               <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col">
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                   <h3 class="text-lg font-bold text-slate-800">Cotizaciones por Fecha</h3>
@@ -409,6 +426,69 @@ interface Product {
               </div>
 
             </div>
+
+            <!-- Búsqueda Avanzada por Rango de Fechas + Cliente -->
+            <div class="mt-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+              <h3 class="text-lg font-bold text-slate-800 mb-4">Búsqueda Avanzada</h3>
+              <div class="flex flex-wrap gap-4 mb-4">
+                <div class="flex flex-col gap-1 min-w-[160px]">
+                  <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Desde</label>
+                  <input type="date" [value]="dashboardFromDate()" (input)="updateDashboardFromDate($event)" class="rounded-lg border-slate-300 shadow-sm px-3 py-2 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-sm text-slate-700 bg-slate-50">
+                </div>
+                <div class="flex flex-col gap-1 min-w-[160px]">
+                  <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Hasta</label>
+                  <input type="date" [value]="dashboardToDate()" (input)="updateDashboardToDate($event)" class="rounded-lg border-slate-300 shadow-sm px-3 py-2 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-sm text-slate-700 bg-slate-50">
+                </div>
+                <div class="flex flex-col gap-1 flex-1 min-w-[200px]">
+                  <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">Cliente</label>
+                  <input type="text" [value]="dashboardClientFilter()" (input)="updateDashboardClientFilter($event)" placeholder="Buscar por nombre de cliente..." class="rounded-lg border-slate-300 shadow-sm px-3 py-2 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-sm">
+                </div>
+                @if (dashboardFromDate() || dashboardToDate() || dashboardClientFilter()) {
+                  <div class="flex items-end">
+                    <button (click)="dashboardFromDate.set(''); dashboardToDate.set(''); dashboardClientFilter.set('')" class="px-4 py-2 text-sm text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Limpiar</button>
+                  </div>
+                }
+              </div>
+              <div class="overflow-x-auto border rounded-xl border-slate-100 max-h-72 overflow-y-auto">
+                <table class="w-full text-left border-collapse">
+                  <thead class="bg-slate-50 sticky top-0 z-10">
+                    <tr class="text-xs text-slate-500 uppercase tracking-wider">
+                      <th class="py-3 px-4 font-medium border-b border-slate-200">N° Cotización</th>
+                      <th class="py-3 px-4 font-medium border-b border-slate-200">Cliente</th>
+                      <th class="py-3 px-4 font-medium border-b border-slate-200">Fecha</th>
+                      <th class="py-3 px-4 font-medium border-b border-slate-200 text-right">Total</th>
+                      <th class="py-3 px-4 font-medium border-b border-slate-200 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-sm">
+                    @for (quote of dashboardFilteredByRange(); track quote.id) {
+                      <tr class="border-b border-slate-50 hover:bg-slate-50/50 transition-colors last:border-0">
+                        <td class="py-3 px-4 font-bold text-slate-700">{{ quote.quoteNumber }}</td>
+                        <td class="py-3 px-4 text-slate-700">{{ quote.customerName }}</td>
+                        <td class="py-3 px-4 text-slate-500">{{ formatDate(quote.date) }}</td>
+                        <td class="py-3 px-4 text-right font-medium text-emerald-600">{{ formatCLP(quote.total) }}</td>
+                        <td class="py-3 px-4 text-right">
+                          <button (click)="viewQuote(quote)" class="text-xs font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            Ver
+                          </button>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="5" class="py-8 text-center text-slate-400 italic">
+                          @if (dashboardFromDate() || dashboardToDate() || dashboardClientFilter()) {
+                            No se encontraron resultados con los filtros aplicados.
+                          } @else {
+                            Usa los filtros para buscar cotizaciones.
+                          }
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
           } @else if (currentView() === 'clientes') {
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col xl:flex-row gap-8">
               
@@ -426,7 +506,13 @@ interface Product {
 
                 <div class="flex flex-col gap-1.5">
                   <label class="text-xs font-bold text-slate-500 uppercase tracking-wider">RUT <span class="text-red-500">*</span></label>
-                  <input type="text" [value]="clientRut()" (input)="updateClientForm('rut', $event)" placeholder="Ej. 12.345.678-9" class="w-full rounded-lg border-slate-300 shadow-sm px-4 py-2 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all">
+                  <input type="text" [value]="clientRut()" (input)="updateClientForm('rut', $event)" placeholder="Ej. 12.345.678-9" [class]="rutError() ? 'border-red-400 focus:border-red-500 focus:ring-red-400' : 'border-slate-300 focus:border-emerald-500 focus:ring-emerald-500'" class="w-full rounded-lg shadow-sm px-4 py-2 border outline-none transition-all">
+                  @if (rutError()) {
+                    <p class="text-xs text-red-500 flex items-center gap-1 mt-0.5">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                      {{ rutError() }}
+                    </p>
+                  }
                 </div>
 
                 <div class="flex flex-col gap-1.5">
@@ -692,6 +778,10 @@ interface Product {
                     Limpiar
                   </button>
 
+                  <button (click)="previewPDF()" [disabled]="isExporting()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    Vista Previa
+                  </button>
                   <button (click)="exportPDF()" [disabled]="isExporting()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                     @if (isExporting()) {
                       <svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -717,13 +807,27 @@ interface Product {
                     <input type="date" [value]="quoteDate()" (input)="updateQuoteDate($event)" class="flex-1 rounded-lg border-slate-300 shadow-sm px-4 py-2.5 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-slate-700">
                   </div>
                 </div>
-                <!-- Columna Derecha (Cliente) -->
+                <!-- Columna Derecha (Cliente + Estado) -->
                 <div class="flex flex-col gap-4">
                   <div class="flex items-center gap-4">
                     <label class="font-semibold text-slate-600 text-sm uppercase tracking-wider min-w-[100px]">Cliente:</label>
                     <input type="text" [value]="customerName()" (input)="updateCustomerName($event)" placeholder="Nombre del cliente o empresa..." class="flex-1 rounded-lg border-slate-300 shadow-sm px-4 py-2.5 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all">
                   </div>
+                  <div class="flex items-center gap-4">
+                    <label class="font-semibold text-slate-600 text-sm uppercase tracking-wider min-w-[100px]">Estado:</label>
+                    <select [value]="quoteStatus()" (change)="updateQuoteStatus($any($event.target).value)" class="flex-1 rounded-lg border-slate-300 shadow-sm px-4 py-2.5 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white text-slate-700">
+                      <option value="pendiente">Pendiente</option>
+                      <option value="aprobada">Aprobada</option>
+                      <option value="rechazada">Rechazada</option>
+                    </select>
+                  </div>
                 </div>
+              </div>
+
+              <!-- Notas de la cotización -->
+              <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Notas / Observaciones</label>
+                <textarea [value]="quoteNotes()" (input)="updateQuoteNotes($event)" rows="2" placeholder="Condiciones especiales, acuerdos, detalles adicionales..." class="w-full rounded-lg border-slate-300 shadow-sm px-4 py-2.5 border focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all resize-none text-sm text-slate-700"></textarea>
               </div>
               
               <!-- Panel de control para agregar elementos -->
@@ -858,32 +962,59 @@ interface Product {
                       <th class="pb-3 font-medium">N° Cotización</th>
                       <th class="pb-3 font-medium">Fecha</th>
                       <th class="pb-3 font-medium">Cliente</th>
+                      <th class="pb-3 font-medium text-center">Estado</th>
                       <th class="pb-3 font-medium text-right">Total</th>
-                      <th class="pb-3 font-medium text-center w-40">Acciones</th>
+                      <th class="pb-3 font-medium text-center w-44">Acciones</th>
                     </tr>
                   </thead>
                   <tbody class="text-sm">
                     @for (quote of filteredQuotes(); track quote.id) {
                       <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                        <td class="py-4 font-medium text-slate-700">{{ quote.quoteNumber }}</td>
+                        <td class="py-4 font-medium text-slate-700">
+                          {{ quote.quoteNumber }}
+                          @if (quote.notes) {
+                            <span class="block text-xs text-slate-400 font-normal truncate max-w-[160px]" [title]="quote.notes">{{ quote.notes }}</span>
+                          }
+                        </td>
                         <td class="py-4 text-slate-600">{{ formatDate(quote.date) }}</td>
                         <td class="py-4 text-slate-800">{{ quote.customerName }}</td>
+                        <td class="py-4 text-center">
+                          @if (quote.status === 'aprobada') {
+                            <span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                              Aprobada
+                            </span>
+                          } @else if (quote.status === 'rechazada') {
+                            <span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-700">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                              Rechazada
+                            </span>
+                          } @else {
+                            <span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                              Pendiente
+                            </span>
+                          }
+                        </td>
                         <td class="py-4 text-right font-medium text-emerald-600">{{ formatCLP(quote.total) }}</td>
                         <td class="py-4 text-center">
                           <div class="flex items-center justify-center gap-1">
                             <!-- Ver Info -->
                             <button (click)="viewQuote(quote)" class="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="Ver detalle de cotización">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             </button>
                             <!-- Editar -->
                             <button (click)="editQuote(quote)" class="text-amber-500 hover:text-amber-700 p-2 rounded-lg hover:bg-amber-50 transition-colors" title="Editar y recargar">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                            </button>
+                            <!-- Duplicar -->
+                            <button (click)="duplicateQuote(quote)" class="text-indigo-500 hover:text-indigo-700 p-2 rounded-lg hover:bg-indigo-50 transition-colors" title="Duplicar cotización">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                             <!-- Borrar -->
                             <button (click)="deleteSavedQuote(quote.id)" class="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors" title="Eliminar del historial">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                             </button>
-
                           </div>
                         </td>
                       </tr>
@@ -1016,6 +1147,31 @@ interface Product {
         </div>
       }
 
+      <!-- Modal Vista Previa PDF -->
+      @if (showPdfPreviewModal()) {
+        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4">
+          <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col" style="max-height: 90vh">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h3 class="text-lg font-bold text-slate-800">Vista Previa — Cotización {{ quoteNumber() || 'S/N' }}</h3>
+              <div class="flex items-center gap-3">
+                <button (click)="downloadPdfFromPreview()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Descargar PDF
+                </button>
+                <button (click)="closePdfPreview()" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100 transition-colors" title="Cerrar">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              </div>
+            </div>
+            <div class="flex-1 overflow-hidden rounded-b-2xl">
+              @if (pdfPreviewUrl()) {
+                <iframe [src]="pdfPreviewUrl()" class="w-full h-full rounded-b-2xl" style="min-height: 70vh; border: none;"></iframe>
+              }
+            </div>
+          </div>
+        </div>
+      }
+
     </div>
     } <!-- fin @else isLoggedIn -->
   `
@@ -1040,15 +1196,15 @@ export class App implements OnInit {
   loginPassword = signal<string>('');
   showLoginErrorModal = signal<boolean>(false);
   showPassword = signal<boolean>(false);
-
-  private readonly VALID_USER = 'SolucionesMB';
-  private readonly VALID_PASS = 'Solucionesmb2027';
+  currentUser = signal<{ username: string; role: string; displayName: string } | null>(null);
 
   doLogin() {
     const user = this.loginUsername().trim();
     const pass = this.loginPassword();
-    if (user === this.VALID_USER && pass === this.VALID_PASS) {
+    const found = environment.validUsers.find(u => u.username === user && u.password === pass);
+    if (found) {
       this.showLoginErrorModal.set(false);
+      this.currentUser.set({ username: found.username, role: found.role, displayName: found.displayName });
       this.isLoggedIn.set(true);
     } else {
       this.showLoginErrorModal.set(true);
@@ -1057,11 +1213,11 @@ export class App implements OnInit {
 
   doLogout() {
     this.isLoggedIn.set(false);
+    this.currentUser.set(null);
     this.loginUsername.set('');
     this.loginPassword.set('');
     this.showLoginErrorModal.set(false);
     this.showPassword.set(false);
-    // Limpiar datos en memoria al salir
     this.clients.set([]);
     this.products.set([]);
     this.savedQuotes.set([]);
@@ -1104,10 +1260,12 @@ export class App implements OnInit {
       this.savedQuotes.set(cotizaciones.map((q: any) => ({
         id: q.id,
         quoteNumber: q.numero_cotizacion,
-        date: new Date(q.fecha + 'T12:00:00'), // mediodía para evitar desfase de zona horaria
+        date: new Date(q.fecha + 'T12:00:00'),
         customerName: q.nombre_cliente,
         total: q.total,
-        items: q.items ?? []
+        items: q.items ?? [],
+        notes: q.notas ?? '',
+        status: (q.estado ?? 'pendiente') as QuoteStatus
       })));
     } catch (e) {
       console.error('Error cargando datos:', e);
@@ -1185,8 +1343,24 @@ export class App implements OnInit {
   // Array que guarda el Historial de cotizaciones
   savedQuotes = signal<SavedQuote[]>([]);
 
+  // --- NOTAS Y ESTADO DE COTIZACIÓN ---
+  quoteNotes = signal<string>('');
+  quoteStatus = signal<QuoteStatus>('pendiente');
+
   // --- ESTADO DEL DASHBOARD ---
   dashboardFilterDate = signal<string>(this.getTodayDateString());
+  dashboardFromDate = signal<string>('');
+  dashboardToDate = signal<string>('');
+  dashboardClientFilter = signal<string>('');
+
+  // --- VISTA PREVIA PDF ---
+  private readonly sanitizer = inject(DomSanitizer);
+  pdfPreviewUrl = signal<SafeResourceUrl | null>(null);
+  showPdfPreviewModal = signal<boolean>(false);
+  private _cachedPdfDoc: any = null;
+
+  // --- VALIDACIÓN RUT ---
+  rutError = signal<string>('');
 
   totalQuotesCount = computed(() => this.savedQuotes().length);
 
@@ -1213,9 +1387,34 @@ export class App implements OnInit {
     }).slice(0, 5);
   });
 
+  dashboardFilteredByRange = computed(() => {
+    const from = this.dashboardFromDate();
+    const to = this.dashboardToDate();
+    const client = this.dashboardClientFilter().toLowerCase().trim();
+    return this.savedQuotes().filter(quote => {
+      const qStr = quote.date.toISOString().slice(0, 10);
+      if (from && qStr < from) return false;
+      if (to && qStr > to) return false;
+      if (client && !quote.customerName.toLowerCase().includes(client)) return false;
+      return true;
+    });
+  });
+
   updateDashboardFilterDate(event: Event) {
     const input = event.target as HTMLInputElement;
     this.dashboardFilterDate.set(input.value);
+  }
+
+  updateDashboardFromDate(event: Event) {
+    this.dashboardFromDate.set((event.target as HTMLInputElement).value);
+  }
+
+  updateDashboardToDate(event: Event) {
+    this.dashboardToDate.set((event.target as HTMLInputElement).value);
+  }
+
+  updateDashboardClientFilter(event: Event) {
+    this.dashboardClientFilter.set((event.target as HTMLInputElement).value);
   }
   // -----------------------------
 
@@ -1374,11 +1573,33 @@ export class App implements OnInit {
     }
   }
 
+  validateRut(rut: string): boolean {
+    const clean = rut.replace(/[\.\-]/g, '').toUpperCase();
+    if (clean.length < 2) return false;
+    const body = clean.slice(0, -1);
+    const dv = clean.slice(-1);
+    if (!/^\d+$/.test(body)) return false;
+    let sum = 0;
+    let mul = 2;
+    for (let i = body.length - 1; i >= 0; i--) {
+      sum += parseInt(body[i], 10) * mul;
+      mul = mul === 7 ? 2 : mul + 1;
+    }
+    const expected = 11 - (sum % 11);
+    const dvExpected = expected === 11 ? '0' : expected === 10 ? 'K' : String(expected);
+    return dv === dvExpected;
+  }
+
   async saveClient() {
     if (!this.clientName().trim() || !this.clientRut().trim()) {
       this.showClientValidationErrorModal.set(true);
       return;
     }
+    if (!this.validateRut(this.clientRut())) {
+      this.rutError.set('El RUT ingresado no es válido.');
+      return;
+    }
+    this.rutError.set('');
 
     const editId = this.editingClientId();
     try {
@@ -1422,7 +1643,8 @@ export class App implements OnInit {
     this.clientEmail.set('');
     this.clientAddress.set('');
     this.clientObservations.set('');
-    this.editingClientId.set(null); // Reseteamos modo edición
+    this.editingClientId.set(null);
+    this.rutError.set('');
   }
 
   editClient(client: Client) {
@@ -1619,10 +1841,20 @@ export class App implements OnInit {
 
   clearQuote() {
     this.items.set([]);
-    this.customerName.set(''); // Limpiamos también el input del cliente
-    this.quoteNumber.set(''); // Limpiamos el número de cotización
-    this.editingQuoteId.set(null); // Reseteamos modo edición
-    this.quoteDate.set(this.getTodayDateString()); // Restauramos la fecha a hoy
+    this.customerName.set('');
+    this.quoteNumber.set('');
+    this.editingQuoteId.set(null);
+    this.quoteDate.set(this.getTodayDateString());
+    this.quoteNotes.set('');
+    this.quoteStatus.set('pendiente');
+  }
+
+  updateQuoteNotes(event: Event) {
+    this.quoteNotes.set((event.target as HTMLTextAreaElement).value);
+  }
+
+  updateQuoteStatus(value: string) {
+    this.quoteStatus.set(value as QuoteStatus);
   }
 
   // Obtiene la fecha actual en formato YYYY-MM-DD para el input nativo
@@ -1698,7 +1930,9 @@ export class App implements OnInit {
           fecha: this.quoteDate(),
           nombre_cliente: this.customerName().trim() || 'Cliente sin registrar',
           total: this.total(),
-          items: this.sortedItems()
+          items: this.sortedItems(),
+          notas: this.quoteNotes(),
+          estado: this.quoteStatus()
         });
 
         const updatedQuote: SavedQuote = {
@@ -1707,16 +1941,20 @@ export class App implements OnInit {
           date: finalDate,
           customerName: updated.nombre_cliente,
           total: updated.total,
-          items: updated.items
+          items: updated.items,
+          notes: updated.notas ?? '',
+          status: (updated.estado ?? 'pendiente') as QuoteStatus
         };
         this.savedQuotes.update(quotes => quotes.map(q => q.id === editId ? updatedQuote : q));
       } else {
         const inserted = await this.supa.insertCotizacion({
           numero_cotizacion: finalQuoteNumber,
-          fecha: this.quoteDate(), // YYYY-MM-DD
+          fecha: this.quoteDate(),
           nombre_cliente: this.customerName().trim() || 'Cliente sin registrar',
           total: this.total(),
-          items: this.sortedItems()
+          items: this.sortedItems(),
+          notas: this.quoteNotes(),
+          estado: this.quoteStatus()
         });
 
         const newQuote: SavedQuote = {
@@ -1725,7 +1963,9 @@ export class App implements OnInit {
           date: finalDate,
           customerName: inserted.nombre_cliente,
           total: inserted.total,
-          items: inserted.items
+          items: inserted.items,
+          notes: inserted.notas ?? '',
+          status: (inserted.estado ?? 'pendiente') as QuoteStatus
         };
         this.savedQuotes.update(quotes => [newQuote, ...quotes]);
       }
@@ -1744,220 +1984,149 @@ export class App implements OnInit {
   // --- GENERACIÓN DE ARCHIVO PDF ---
 
   async exportPDF() {
-    // Evita exportar una cotización vacía
     if (this.items().length === 0) {
       this.showExportEmptyModal.set(true);
       return;
     }
-
     this.isExporting.set(true);
-
     try {
-      // 1. Cargamos las librerías jsPDF y AutoTable dinámicamente. 
-      if (!(window as any).jspdf) {
-        await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-        await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js');
-      }
-
-      const { jsPDF } = (window as any).jspdf;
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-
-      // 2. Intentar cargar el logo de la empresa desde la carpeta public
-      try {
-        const logoUrl = '/logomb.jpg'; // <-- Buscará el logo en la raíz (carpeta public)
-        const imgData = await this.loadImageToBase64(logoUrl);
-        // Ajusta las coordenadas y tamaño (x, y, ancho, alto) según las proporciones de tu logo
-        doc.addImage(imgData, 'JPEG', 14, 15, 35, 15); 
-      } catch (e) {
-        console.warn('Logo logomb.jpg no encontrado en la ruta assets/. Solo se mostrará el texto.');
-        doc.setFontSize(12);
-        doc.setTextColor(150);
-        doc.text('[ Logo MB ]', 14, 25);
-      }
-
-      // 3. Texto bajo el logo
-      doc.setFontSize(10);
-      doc.setTextColor(80, 80, 80); // Gris oscuro
-      doc.text('M&B Soluciones SpA', 14, 35);
-      doc.setFontSize(8);
-      doc.text('RUT: 77.858.422-0', 14, 39);
-      doc.text('ventas@solucionesmb.cl', 14, 43);
-
-      // 4. Título Principal
-      doc.setFontSize(18);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(30, 41, 59); // Color oscuro
-      doc.text('OFERTA ECONÓMICA', pageWidth / 2, 35, { align: 'center' });
-      doc.setFont(undefined, 'normal');
-
-      // 5. Datos del Cliente y la Cotización
-      doc.setFontSize(11);
-      doc.setTextColor(50, 50, 50);
-
-      const [year, month, day] = this.quoteDate().split('-');
-      const formattedDate = `${day}/${month}/${year}`;
-
-      const currentClientName = this.customerName() || 'Sin registrar';
-      const foundClient = this.clients().find(c => c.name.toLowerCase().trim() === currentClientName.toLowerCase().trim());
-
-      let currentY = 55;
-      doc.text(`Cliente: ${currentClientName}`, 14, currentY);
-      
-      if (foundClient) {
-        if (foundClient.rut) {
-          currentY += 6;
-          doc.text(`RUT: ${foundClient.rut}`, 14, currentY);
-        }
-        if (foundClient.email) {
-          currentY += 6;
-          doc.text(`Correo: ${foundClient.email}`, 14, currentY);
-        }
-        if (foundClient.phone) {
-          currentY += 6;
-          doc.text(`Teléfono: ${foundClient.phone}`, 14, currentY);
-        }
-        if (foundClient.address) {
-          currentY += 6;
-          doc.text(`Dirección: ${foundClient.address}`, 14, currentY);
-        }
-      }
-
-      // Datos de la cotización a la derecha
-      doc.text(`N° Cotización: ${this.quoteNumber() || 'S/N'}`, pageWidth - 14, 55, { align: 'right' });
-      doc.text(`Fecha: ${formattedDate}`, pageWidth - 14, 61, { align: 'right' });
-      
-      // Calculamos dinámicamente el inicio de la tabla
-      const startTableY = Math.max(currentY + 8, 75);
-
-      // 6. Tabla de Productos/Servicios usando AutoTable
-      const tableBody = this.sortedItems().map(item => {
-        if (item.isTitle) {
-          // Fila destacada de título/sección
-          return [
-            { 
-              content: item.name.toUpperCase(), 
-              colSpan: 4, 
-              styles: { fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [30, 41, 59] } 
-            }
-          ];
-        } else {
-          // Fila de sub-ítem
-          return [
-            '  • ' + item.name,
-            item.quantity.toString(),
-            this.formatCLP(item.price),
-            this.formatCLP(item.quantity * item.price)
-          ];
-        }
-      });
-
-      (doc as any).autoTable({
-        startY: startTableY,
-        head: [['Descripción', 'Cantidad', 'Precio Unit.', 'Total']],
-        body: tableBody,
-        theme: 'grid',
-        headStyles: { fillColor: [0, 82, 155], textColor: 255 }, // Azul alineado con el logo
-        columnStyles: {
-          0: { cellWidth: 'auto' },
-          1: { cellWidth: 25, halign: 'center' },
-          2: { cellWidth: 35, halign: 'right' },
-          3: { cellWidth: 35, halign: 'right' },
-        },
-        styles: { fontSize: 9, cellPadding: 5 }
-      });
-
-      // 7. Resumen de Totales
-      const finalY = (doc as any).lastAutoTable.finalY + 15;
-
-      doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text(`Subtotal:`, pageWidth - 55, finalY);
-      doc.text(this.formatCLP(this.subtotal()), pageWidth - 14, finalY, { align: 'right' });
-
-      doc.text(`IVA (19%):`, pageWidth - 55, finalY + 7);
-      doc.text(this.formatCLP(this.iva()), pageWidth - 14, finalY + 7, { align: 'right' });
-
-      doc.setFontSize(12);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(0, 82, 155); // Azul corporativo
-      doc.text(`Total Final:`, pageWidth - 55, finalY + 16);
-      doc.text(this.formatCLP(this.total()), pageWidth - 14, finalY + 16, { align: 'right' });
-
-      // 8. Información Adicional / Antecedentes
-      let infoY = finalY + 25;
-      
-      // Verificamos si cabe en la página, de lo contrario agregamos una nueva
-      if (infoY + 100 > doc.internal.pageSize.getHeight() - 20) {
-        doc.addPage();
-        infoY = 20;
-      }
-
-      doc.setFontSize(9);
-      doc.setTextColor(50, 50, 50);
-      
-      // Colores y Fuentes
-      doc.setFont(undefined, 'bold');
-      doc.text('Aceptación de Cotización:', 14, infoY);
-      doc.setFont(undefined, 'normal');
-      doc.text('Contra Orden de Compra', 14, infoY + 5);
-      
-      doc.setFont(undefined, 'bold');
-      doc.text('Garantía:', 14, infoY + 12);
-      doc.setFont(undefined, 'normal');
-      doc.text('Producto nuevo.', 14, infoY + 17);
-      
-      doc.setFont(undefined, 'bold');
-      doc.text('Forma de Pago:', 14, infoY + 24);
-      doc.setFont(undefined, 'normal');
-      doc.text('Le emitimos y enviamos la factura para realizar el prepago por transferencia bancaria.', 14, infoY + 29);
-      
-      doc.setFont(undefined, 'bold');
-      doc.text('Lugar de Entrega:', 14, infoY + 36);
-      doc.setFont(undefined, 'normal');
-      doc.text('Por el medio que le acomode al cliente.', 14, infoY + 41);
-
-      // Antecedentes bancarios
-      doc.setFont(undefined, 'bold');
-      doc.text('Antecedentes para transferencia bancaria:', 14, infoY + 51);
-      doc.setFont(undefined, 'normal');
-      
-      doc.text('1_ Empresa: M&B Soluciones SpA', 14, infoY + 56);
-      
-      doc.text('2_ RUT: 77.858.422-03', 14, infoY + 61);
-      // Aplicamos negrita temporalmente para Tipo de cuenta y Número de cuenta
-      doc.setFont(undefined, 'bold');
-      doc.text('Tipo de cuenta: Chequera electrónica', 60, infoY + 61);
-      doc.text('Número de cuenta: 902-7-228005-2', 130, infoY + 61);
-      doc.setFont(undefined, 'normal');
-
-      doc.text('3_ Dirección: Roberto Lorca Olguín 180, El Bosque, Santiago de Chile', 14, infoY + 66);
-      doc.text('4_ Contacto: Ramón Méndez Román, C.I. 9.023466-8', 14, infoY + 71);
-      doc.text('5_ Nro. Celular: Móvil (569) 3241 4560 ó (569) 6589 5787', 14, infoY + 76);
-      doc.text('6_ Giro: Rep. de otro tipo de Maq. y Eq. Ind. N.C.P.', 14, infoY + 81);
-      doc.text('7_ Correo: rmendez@solucionesmb.cl ó claudia.mendez@solucionesmb.cl', 14, infoY + 86);
-      
-      // Eslogan
-      doc.setFontSize(10);
-      doc.setFont(undefined, 'italic');
-      doc.setTextColor(0, 82, 155); // Azul alineado al logo
-      doc.text('Somos una Fuente de Soluciones', 14, infoY + 94);
-
-      // 9. Pie de página
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.setFont(undefined, 'normal');
-      doc.text('Este documento es una estimación de precios y puede estar sujeta a cambios.', pageWidth / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
-
-      // 10. Guardar
+      const doc = await this.buildPdfDoc();
       doc.save(`Cotizacion_${this.quoteNumber() || 'Generada'}.pdf`);
-
     } catch (error) {
       console.error('Error al generar el PDF:', error);
       alert('Ocurrió un error al intentar generar el PDF.');
     } finally {
       this.isExporting.set(false);
     }
+  }
+
+  async previewPDF() {
+    if (this.items().length === 0) {
+      this.showExportEmptyModal.set(true);
+      return;
+    }
+    this.isExporting.set(true);
+    try {
+      const doc = await this.buildPdfDoc();
+      this._cachedPdfDoc = doc;
+      const dataUri: string = doc.output('datauristring');
+      this.pdfPreviewUrl.set(this.sanitizer.bypassSecurityTrustResourceUrl(dataUri));
+      this.showPdfPreviewModal.set(true);
+    } catch (error) {
+      console.error('Error al generar vista previa:', error);
+    } finally {
+      this.isExporting.set(false);
+    }
+  }
+
+  closePdfPreview() {
+    this._cachedPdfDoc = null;
+    this.pdfPreviewUrl.set(null);
+    this.showPdfPreviewModal.set(false);
+  }
+
+  downloadPdfFromPreview() {
+    if (this._cachedPdfDoc) {
+      this._cachedPdfDoc.save(`Cotizacion_${this.quoteNumber() || 'Generada'}.pdf`);
+    }
+  }
+
+  private async buildPdfDoc(): Promise<any> {
+    if (!(window as any).jspdf) {
+      await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js');
+    }
+    const { jsPDF } = (window as any).jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    try {
+      const imgData = await this.loadImageToBase64('/logomb.jpg');
+      doc.addImage(imgData, 'JPEG', 14, 15, 35, 15);
+    } catch {
+      doc.setFontSize(12); doc.setTextColor(150); doc.text('[ Logo MB ]', 14, 25);
+    }
+
+    doc.setFontSize(10); doc.setTextColor(80, 80, 80);
+    doc.text('M&B Soluciones SpA', 14, 35);
+    doc.setFontSize(8);
+    doc.text('RUT: 77.858.422-0', 14, 39);
+    doc.text('ventas@solucionesmb.cl', 14, 43);
+
+    doc.setFontSize(18); doc.setFont(undefined, 'bold'); doc.setTextColor(30, 41, 59);
+    doc.text('OFERTA ECONÓMICA', pageWidth / 2, 35, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+
+    doc.setFontSize(11); doc.setTextColor(50, 50, 50);
+    const [year, month, day] = this.quoteDate().split('-');
+    const formattedDate = `${day}/${month}/${year}`;
+    const currentClientName = this.customerName() || 'Sin registrar';
+    const foundClient = this.clients().find(c => c.name.toLowerCase().trim() === currentClientName.toLowerCase().trim());
+
+    let currentY = 55;
+    doc.text(`Cliente: ${currentClientName}`, 14, currentY);
+    if (foundClient) {
+      if (foundClient.rut) { currentY += 6; doc.text(`RUT: ${foundClient.rut}`, 14, currentY); }
+      if (foundClient.email) { currentY += 6; doc.text(`Correo: ${foundClient.email}`, 14, currentY); }
+      if (foundClient.phone) { currentY += 6; doc.text(`Teléfono: ${foundClient.phone}`, 14, currentY); }
+      if (foundClient.address) { currentY += 6; doc.text(`Dirección: ${foundClient.address}`, 14, currentY); }
+    }
+
+    doc.text(`N° Cotización: ${this.quoteNumber() || 'S/N'}`, pageWidth - 14, 55, { align: 'right' });
+    doc.text(`Fecha: ${formattedDate}`, pageWidth - 14, 61, { align: 'right' });
+    const startTableY = Math.max(currentY + 8, 75);
+
+    const tableBody = this.sortedItems().map(item => {
+      if (item.isTitle) {
+        return [{ content: item.name.toUpperCase(), colSpan: 4, styles: { fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [30, 41, 59] } }];
+      }
+      return ['  • ' + item.name, item.quantity.toString(), this.formatCLP(item.price), this.formatCLP(item.quantity * item.price)];
+    });
+
+    (doc as any).autoTable({
+      startY: startTableY,
+      head: [['Descripción', 'Cantidad', 'Precio Unit.', 'Total']],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [0, 82, 155], textColor: 255 },
+      columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 25, halign: 'center' }, 2: { cellWidth: 35, halign: 'right' }, 3: { cellWidth: 35, halign: 'right' } },
+      styles: { fontSize: 9, cellPadding: 5 }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    doc.setFontSize(10); doc.setTextColor(50, 50, 50);
+    doc.text(`Subtotal:`, pageWidth - 55, finalY);
+    doc.text(this.formatCLP(this.subtotal()), pageWidth - 14, finalY, { align: 'right' });
+    doc.text(`IVA (19%):`, pageWidth - 55, finalY + 7);
+    doc.text(this.formatCLP(this.iva()), pageWidth - 14, finalY + 7, { align: 'right' });
+    doc.setFontSize(12); doc.setFont(undefined, 'bold'); doc.setTextColor(0, 82, 155);
+    doc.text(`Total Final:`, pageWidth - 55, finalY + 16);
+    doc.text(this.formatCLP(this.total()), pageWidth - 14, finalY + 16, { align: 'right' });
+
+    let infoY = finalY + 25;
+    if (infoY + 100 > doc.internal.pageSize.getHeight() - 20) { doc.addPage(); infoY = 20; }
+
+    doc.setFontSize(9); doc.setTextColor(50, 50, 50);
+    doc.setFont(undefined, 'bold'); doc.text('Aceptación de Cotización:', 14, infoY); doc.setFont(undefined, 'normal'); doc.text('Contra Orden de Compra', 14, infoY + 5);
+    doc.setFont(undefined, 'bold'); doc.text('Garantía:', 14, infoY + 12); doc.setFont(undefined, 'normal'); doc.text('Producto nuevo.', 14, infoY + 17);
+    doc.setFont(undefined, 'bold'); doc.text('Forma de Pago:', 14, infoY + 24); doc.setFont(undefined, 'normal'); doc.text('Le emitimos y enviamos la factura para realizar el prepago por transferencia bancaria.', 14, infoY + 29);
+    doc.setFont(undefined, 'bold'); doc.text('Lugar de Entrega:', 14, infoY + 36); doc.setFont(undefined, 'normal'); doc.text('Por el medio que le acomode al cliente.', 14, infoY + 41);
+    doc.setFont(undefined, 'bold'); doc.text('Antecedentes para transferencia bancaria:', 14, infoY + 51); doc.setFont(undefined, 'normal');
+    doc.text('1_ Empresa: M&B Soluciones SpA', 14, infoY + 56);
+    doc.text('2_ RUT: 77.858.422-03', 14, infoY + 61);
+    doc.setFont(undefined, 'bold'); doc.text('Tipo de cuenta: Chequera electrónica', 60, infoY + 61); doc.text('Número de cuenta: 902-7-228005-2', 130, infoY + 61); doc.setFont(undefined, 'normal');
+    doc.text('3_ Dirección: Roberto Lorca Olguín 180, El Bosque, Santiago de Chile', 14, infoY + 66);
+    doc.text('4_ Contacto: Ramón Méndez Román, C.I. 9.023466-8', 14, infoY + 71);
+    doc.text('5_ Nro. Celular: Móvil (569) 3241 4560 ó (569) 6589 5787', 14, infoY + 76);
+    doc.text('6_ Giro: Rep. de otro tipo de Maq. y Eq. Ind. N.C.P.', 14, infoY + 81);
+    doc.text('7_ Correo: rmendez@solucionesmb.cl ó claudia.mendez@solucionesmb.cl', 14, infoY + 86);
+    doc.setFontSize(10); doc.setFont(undefined, 'italic'); doc.setTextColor(0, 82, 155);
+    doc.text('Somos una Fuente de Soluciones', 14, infoY + 94);
+    doc.setFontSize(8); doc.setTextColor(150, 150, 150); doc.setFont(undefined, 'normal');
+    doc.text('Este documento es una estimación de precios y puede estar sujeta a cambios.', pageWidth / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
+
+    (window as any)._lastPdfDoc = doc;
+    return doc;
   }
 
   // Utilidad para cargar librerías externas
@@ -2018,17 +2187,26 @@ export class App implements OnInit {
   }
 
   private loadQuoteIntoEditor(quote: SavedQuote) {
-    // Recarga los datos guardados de vuelta al cotizador
     this.items.set([...quote.items]);
     this.customerName.set(quote.customerName);
-    this.quoteNumber.set(quote.quoteNumber); // Cargamos también el número al editar
-    this.editingQuoteId.set(quote.id); // Guardamos el ID para poder actualizar
-    
-    // Convertimos la fecha guardada de vuelta a YYYY-MM-DD para el input
+    this.quoteNumber.set(quote.quoteNumber);
+    this.editingQuoteId.set(quote.id);
+    this.quoteNotes.set(quote.notes ?? '');
+    this.quoteStatus.set(quote.status ?? 'pendiente');
     const d = quote.date;
     const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     this.quoteDate.set(dateString);
+    this.currentView.set('cotizaciones');
+  }
 
+  duplicateQuote(quote: SavedQuote) {
+    this.items.set([...quote.items.map(i => ({ ...i, id: Date.now().toString() + Math.random() }))]);
+    this.customerName.set(quote.customerName);
+    this.quoteNumber.set('');
+    this.editingQuoteId.set(null);
+    this.quoteNotes.set(quote.notes ?? '');
+    this.quoteStatus.set('pendiente');
+    this.quoteDate.set(this.getTodayDateString());
     this.currentView.set('cotizaciones');
   }
 

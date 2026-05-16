@@ -105,6 +105,7 @@ export class SupabaseService {
   async insertCotizacion(cotizacion: {
     numero_cotizacion: string; fecha: string;
     nombre_cliente: string; total: number; items: any[];
+    notas?: string; estado?: string;
   }): Promise<any> {
     const { data, error } = await this.client
       .from('cotizaciones').insert(cotizacion).select().single();
@@ -115,6 +116,7 @@ export class SupabaseService {
   async updateCotizacion(id: string, changes: Partial<{
     numero_cotizacion: string; fecha: string;
     nombre_cliente: string; total: number; items: any[];
+    notas: string; estado: string;
   }>): Promise<any> {
     const { data, error } = await this.client
       .from('cotizaciones').update(changes).eq('id', id).select().single();
